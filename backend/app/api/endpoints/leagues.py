@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List
 
 from ...core.database import get_db
@@ -30,7 +30,7 @@ router = APIRouter(tags=["leagues"])
 async def create_league(
     league: LeagueCreate,
     current_user: UserResponse = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Create a new league and set the current user as owner.
@@ -47,7 +47,7 @@ async def create_league(
         HTTPException: If league name already exists
     """
     league_service = LeagueService(db)
-    return league_service.create_league(league, current_user.id)
+    return await league_service.create_league(league, current_user.id)
 
 @router.get(
     "/my",
@@ -57,7 +57,7 @@ async def create_league(
 )
 async def get_my_leagues(
     current_user: UserResponse = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Get all leagues for the authenticated user.
@@ -70,7 +70,7 @@ async def get_my_leagues(
         List[LeagueResponse]: List of leagues the user is a member of
     """
     league_service = LeagueService(db)
-    return league_service.get_user_leagues(current_user.id)
+    return await league_service.get_user_leagues(current_user.id)
 
 @router.get(
     "/{league_id}",
@@ -81,7 +81,7 @@ async def get_my_leagues(
 async def get_league(
     league_id: int,
     current_user: UserResponse = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Get detailed information about a specific league.
@@ -98,7 +98,7 @@ async def get_league(
         HTTPException: If league not found
     """
     league_service = LeagueService(db)
-    league = league_service.get_league(league_id)
+    league = await league_service.get_league(league_id)
     if not league:
         raise HTTPException(status_code=404, detail="League not found")
     return league
@@ -118,7 +118,7 @@ async def get_league(
 async def get_league_standings(
     league_id: int,
     current_user: UserResponse = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Get current standings for a league.
@@ -135,7 +135,7 @@ async def get_league_standings(
         HTTPException: If league not found
     """
     league_service = LeagueService(db)
-    return league_service.get_standings(league_id)
+    return await league_service.get_standings(league_id)
 
 @router.post(
     "/{league_id}/members/{user_id}",
@@ -147,7 +147,7 @@ async def add_member(
     league_id: int,
     user_id: int,
     current_user: UserResponse = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Add a user as a member to a league.
@@ -162,7 +162,7 @@ async def add_member(
         HTTPException: If league or user not found, or if user already a member
     """
     league_service = LeagueService(db)
-    if not league_service.add_member(league_id, user_id):
+    if not await league_service.add_member(league_id, user_id):
         raise HTTPException(status_code=400, detail="Could not add member")
 
 @router.delete(
@@ -175,7 +175,7 @@ async def remove_member(
     league_id: int,
     user_id: int,
     current_user: UserResponse = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Remove a member from a league. Only the league owner can do this.
@@ -190,5 +190,5 @@ async def remove_member(
         HTTPException: If league not found, user not found, or current user not owner
     """
     league_service = LeagueService(db)
-    if not league_service.remove_member(league_id, user_id, current_user.id):
+    if not await league_service.remove_member(league_id, user_id, current_user.id):
         raise HTTPException(status_code=400, detail="Could not remove member") 
