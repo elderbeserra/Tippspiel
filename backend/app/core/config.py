@@ -1,30 +1,44 @@
 from pydantic_settings import BaseSettings
 from typing import Optional
-import os
-from dotenv import load_dotenv
-
-load_dotenv()
+from functools import lru_cache
+import secrets
 
 class Settings(BaseSettings):
-    PROJECT_NAME: str = "F1 Predictor"
-    VERSION: str = "1.0.0"
+    # Application
+    APP_NAME: str = "Tippspiel"
+    VERSION: str = "0.1.0"
     API_V1_STR: str = "/api/v1"
+    DEBUG: bool = False
+    
+    # Security
+    SECRET_KEY: str = secrets.token_urlsafe(32)
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     
     # Database
-    SQLITE_URL: str = "sqlite:///./tippspiel.db"
-    
-    # JWT
-    SECRET_KEY: str = os.getenv("SECRET_KEY", "your-secret-key-for-jwt")
-    ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24  # 24 hours
+    SQLITE_URL: str = "sqlite:///./app.db"
+    GCS_BUCKET: Optional[str] = None
+    DB_BACKUP_BUCKET: Optional[str] = None
     
     # CORS
-    BACKEND_CORS_ORIGINS: list = ["http://localhost:3000"]
+    BACKEND_CORS_ORIGINS: list[str] = ["http://localhost:3000"]
     
-    # F1 API
-    F1_BASE_URL: str = "https://www.formula1.com/en/results"
+    # Rate Limiting
+    RATE_LIMIT_PER_MINUTE: int = 60
+    
+    # Cloud Run
+    PROJECT_ID: Optional[str] = None
+    REGION: Optional[str] = None
+    
+    # Logging
+    LOG_LEVEL: str = "INFO"
     
     class Config:
+        env_file = ".env"
         case_sensitive = True
 
-settings = Settings() 
+@lru_cache()
+def get_settings() -> Settings:
+    """Get cached settings instance."""
+    return Settings()
+
+settings = get_settings() 
