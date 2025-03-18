@@ -1,6 +1,6 @@
 from fastapi import HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 from sqlalchemy import select
 from jose import JWTError, jwt
 from typing import cast
@@ -14,13 +14,13 @@ from ..core.security import get_password_hash, verify_password, create_access_to
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{settings.API_V1_STR}/auth/token")
 
 class AuthService:
-    def __init__(self, db: AsyncSession):
+    def __init__(self, db: Session):
         self.db = db
 
     async def register_user(self, user_create: UserCreate) -> User:
         # Check if email already exists
         email_query = select(User).where(User.email == user_create.email)
-        email_result = await self.db.execute(email_query)
+        email_result = self.db.execute(email_query)
         if email_result.scalar_one_or_none():
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -29,7 +29,7 @@ class AuthService:
             
         # Check if username already exists
         username_query = select(User).where(User.username == user_create.username)
-        username_result = await self.db.execute(username_query)
+        username_result = self.db.execute(username_query)
         if username_result.scalar_one_or_none():
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -43,11 +43,11 @@ class AuthService:
         )
         self.db.add(db_user)
         try:
-            await self.db.commit()
-            await self.db.refresh(db_user)
+            self.db.commit()
+            self.db.refresh(db_user)
             return db_user
         except IntegrityError as e:
-            await self.db.rollback()
+            self.db.rollback()
             error_message = str(e)
             if "users.email" in error_message:
                 raise HTTPException(
@@ -67,7 +67,7 @@ class AuthService:
 
     async def authenticate_user(self, email: str, password: str) -> dict:
         query = select(User).where(User.email == email)
-        result = await self.db.execute(query)
+        result = self.db.execute(query)
         user = result.scalar_one_or_none()
         
         if not user:
@@ -105,9 +105,23 @@ class AuthService:
             raise credentials_exception
             
         query = select(User).where(User.id == user_id)
-        result = await self.db.execute(query)
+        result = self.db.execute(query)
         user = result.scalar_one_or_none()
         
         if user is None:
             raise credentials_exception
-        return user 
+        return user
+        
+    async def get_user_by_id(self, user_id: int) -> User:
+        """
+        Get a user by ID.
+        
+        Args:
+            user_id: ID of the user to retrieve
+            
+        Returns:
+            User: User object if found, None otherwise
+        """
+        query = select(User).where(User.id == user_id)
+        result = self.db.execute(query)
+        return result.scalar_one_or_none() 

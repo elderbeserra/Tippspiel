@@ -1,10 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 from typing import List
 
 from ...core.database import get_db
 from ...services.league_service import LeagueService
 from ...api.endpoints.auth import get_current_user
+from ...api.deps import get_league_admin, get_current_superadmin_user
 from ...schemas.league import (
     LeagueCreate,
     LeagueResponse,
@@ -30,7 +31,7 @@ router = APIRouter(tags=["leagues"])
 async def create_league(
     league: LeagueCreate,
     current_user: UserResponse = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    db: Session = Depends(get_db)
 ):
     """
     Create a new league and set the current user as owner.
@@ -57,7 +58,7 @@ async def create_league(
 )
 async def get_my_leagues(
     current_user: UserResponse = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    db: Session = Depends(get_db)
 ):
     """
     Get all leagues for the authenticated user.
@@ -81,7 +82,7 @@ async def get_my_leagues(
 async def get_league(
     league_id: int,
     current_user: UserResponse = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    db: Session = Depends(get_db)
 ):
     """
     Get detailed information about a specific league.
@@ -118,7 +119,7 @@ async def get_league(
 async def get_league_standings(
     league_id: int,
     current_user: UserResponse = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    db: Session = Depends(get_db)
 ):
     """
     Get current standings for a league.
@@ -129,13 +130,16 @@ async def get_league_standings(
         db: Database session
         
     Returns:
-        LeagueStandingsResponse: Current league standings
+        LeagueStandingsResponse: League standings information
         
     Raises:
         HTTPException: If league not found
     """
     league_service = LeagueService(db)
-    return await league_service.get_standings(league_id)
+    try:
+        return await league_service.get_standings(league_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
 @router.post(
     "/{league_id}/members/{user_id}",
@@ -147,48 +151,146 @@ async def add_member(
     league_id: int,
     user_id: int,
     current_user: UserResponse = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    db: Session = Depends(get_db)
 ):
     """
-    Add a user as a member to a league.
+    Add a user to a league.
     
     Args:
-        league_id: ID of the league to add member to
+        league_id: ID of the league to add the user to
         user_id: ID of the user to add
-        current_user: Authenticated user
+        current_user: Authenticated user (must be league admin)
         db: Database session
         
     Raises:
-        HTTPException: If league or user not found, or if user already a member
+        HTTPException: If league or user not found, or current user not owner
     """
+    # Check if user is league admin
+    league_admin = get_league_admin(league_id)
+    await league_admin(current_user=current_user, db=db)
+    
     league_service = LeagueService(db)
     if not await league_service.add_member(league_id, user_id):
-        raise HTTPException(status_code=400, detail="Could not add member")
+        raise HTTPException(status_code=404, detail="League or user not found")
 
 @router.delete(
     "/{league_id}/members/{user_id}",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Remove member from league",
-    description="Remove a user from a league. Only the league owner can remove members."
+    description="Remove a user from a league. Only the league admin (owner) can remove members."
 )
 async def remove_member(
     league_id: int,
     user_id: int,
-    current_user: UserResponse = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user)
 ):
     """
-    Remove a member from a league. Only the league owner can do this.
+    Remove a user from a league.
     
     Args:
-        league_id: ID of the league to remove member from
+        league_id: ID of the league to remove the user from
         user_id: ID of the user to remove
-        current_user: Authenticated user (must be league owner)
+        current_user: Authenticated user (must be league admin)
         db: Database session
         
     Raises:
-        HTTPException: If league not found, user not found, or current user not owner
+        HTTPException: If league or user not found, or current user not owner
     """
     league_service = LeagueService(db)
     if not await league_service.remove_member(league_id, user_id, current_user.id):
-        raise HTTPException(status_code=400, detail="Could not remove member") 
+        raise HTTPException(
+            status_code=404,
+            detail="League or user not found, or you don't have permission to remove this member"
+        )
+
+@router.delete(
+    "/{league_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete league",
+    description="Delete a league. Only the league admin (owner) can delete the league."
+)
+async def delete_league(
+    league_id: int,
+    db: Session = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user)
+):
+    """
+    Delete a league. Only the league admin (owner) can do this.
+    
+    Args:
+        league_id: ID of the league to delete
+        current_user: Authenticated user (must be league admin)
+        db: Database session
+        
+    Raises:
+        HTTPException: If league not found or current user not owner
+    """
+    # Check if user is league admin
+    from sqlalchemy import select
+    from ...models.league import League
+    
+    # Superadmins can perform any league admin action
+    if current_user.is_superadmin:
+        pass  # Allow superadmins to proceed
+    else:
+        # Check if the user is the league owner
+        query = select(League).where(League.id == league_id)
+        result = db.execute(query)
+        league = result.scalar_one_or_none()
+        
+        if not league:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="League not found",
+            )
+        
+        # Get the owner_id as a regular integer
+        owner_id = getattr(league, 'owner_id')
+        if hasattr(owner_id, 'scalar'):
+            owner_id = owner_id.scalar()
+        
+        if owner_id != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You must be the league admin to perform this action",
+            )
+    
+    league_service = LeagueService(db)
+    if not await league_service.delete_league(league_id):
+        raise HTTPException(status_code=404, detail="League not found")
+
+@router.put(
+    "/{league_id}/transfer-ownership/{new_owner_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Transfer league ownership",
+    description="Transfer league ownership to another member. Only the league admin (owner) can transfer ownership."
+)
+async def transfer_ownership(
+    league_id: int,
+    new_owner_id: int,
+    db: Session = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user)
+):
+    """
+    Transfer league ownership to another member.
+    
+    Args:
+        league_id: ID of the league to transfer ownership of
+        new_owner_id: ID of the user to transfer ownership to
+        current_user: Authenticated user (must be league admin)
+        db: Database session
+        
+    Raises:
+        HTTPException: If league not found, new owner not found, or current user not owner
+    """
+    # Check if user is league admin
+    league_admin = get_league_admin(league_id)
+    await league_admin(current_user=current_user, db=db)
+    
+    league_service = LeagueService(db)
+    if not await league_service.transfer_ownership(league_id, new_owner_id):
+        raise HTTPException(
+            status_code=404,
+            detail="League not found, or new owner is not a member of the league"
+        ) 

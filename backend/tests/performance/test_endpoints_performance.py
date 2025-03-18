@@ -1,7 +1,11 @@
 import time
+import pytest
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
+from datetime import datetime
+
+from app.models.f1_data import RaceWeekend, RaceResult
 
 
 def measure_response_time(client: TestClient, method: str, url: str, **kwargs) -> float:
@@ -11,7 +15,7 @@ def measure_response_time(client: TestClient, method: str, url: str, **kwargs) -
     assert response.status_code in (200, 201, 204)  # Ensure request was successful
     return time.time() - start_time
 
-def test_auth_endpoint_performance(client: TestClient, db: Session):
+def test_auth_endpoint_performance(client: TestClient, sync_db: Session):
     """Test authentication endpoints performance."""
     # Test registration performance
     registration_times = []
@@ -47,7 +51,7 @@ def test_auth_endpoint_performance(client: TestClient, db: Session):
 
 def test_league_endpoints_performance(
     client: TestClient,
-    db: Session,
+    sync_db: Session,
     auth_headers
 ):
     """Test league endpoints performance under load."""
@@ -88,9 +92,47 @@ def test_league_endpoints_performance(
     avg_standings_time = sum(standings_times) / len(standings_times)
     assert avg_standings_time < 0.5  # Standings retrieval should take less than 500ms
 
+@pytest.fixture
+def race_result(sync_db: Session):
+    """Create a test race result."""
+    # First create a race weekend
+    race_weekend = RaceWeekend(
+        year=2023,
+        round_number=1,
+        country="Test Country",
+        location="Test Location",
+        circuit_name="Test Circuit",
+        session_date=datetime.now(),
+        has_sprint=False
+    )
+    sync_db.add(race_weekend)
+    sync_db.commit()
+    sync_db.refresh(race_weekend)
+    
+    # Now create race results
+    result = RaceResult(
+        race_weekend_id=race_weekend.id,
+        position=1,
+        driver_number=1,
+        driver_name="Lewis Hamilton",
+        team="Mercedes",
+        grid_position=1,
+        status="Finished",
+        points=25.0,
+        fastest_lap=True,
+        fastest_lap_time="1:30.000",
+        first_pit_lap=20,
+        first_pit_time="25:30.000",
+        pit_stops_count=2
+    )
+    sync_db.add(result)
+    sync_db.commit()
+    sync_db.refresh(result)
+    return result
+
 def test_prediction_submission_performance(
     client: TestClient,
-    db: Session,
+    sync_db: Session,
     auth_headers,
     race_result
 ):
@@ -100,12 +142,13 @@ def test_prediction_submission_performance(
     # Submit multiple predictions concurrently
     def submit_prediction() -> float:
         prediction_data = {
-            "race_id": race_result.race_id,
-            "winner_driver": 1,
-            "podium_drivers": [1, 33, 77],
+            "race_weekend_id": race_result.race_weekend_id,
+            "top_10_prediction": "1,33,44,16,55,4,14,31,22,10",
+            "pole_position": 1,
             "fastest_lap_driver": 33,
             "most_pit_stops_driver": 16,
-            "most_positions_gained": 55
+            "most_positions_gained": 55,
+            "sprint_winner": None
         }
         return measure_response_time(
             client,
@@ -127,7 +170,7 @@ def test_prediction_submission_performance(
     percentile_95 = sorted_times[int(len(sorted_times) * 0.95)]
     assert percentile_95 < 0.6  # 95% of submissions should be under 600ms
 
-def test_race_results_performance(client: TestClient, db: Session, auth_headers):
+def test_race_results_performance(client: TestClient, sync_db: Session, auth_headers):
     """Test race results endpoint performance."""
     # Get multiple race results concurrently
     def get_race_result(race_id: int) -> float:

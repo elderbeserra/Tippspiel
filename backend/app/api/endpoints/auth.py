@@ -1,12 +1,13 @@
 from fastapi import APIRouter, Depends, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 from typing import Annotated
 
 from ...core.database import get_db
 from ...services.auth_service import AuthService
 from ...schemas.user import UserCreate, UserResponse, Token
 from ...core.config import settings
+from ..deps import get_current_user
 
 router = APIRouter(tags=["auth"])
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{settings.API_V1_STR}/auth/token")
@@ -27,7 +28,7 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{settings.API_V1_STR}/auth/token
 )
 async def register(
     user: UserCreate, 
-    db: AsyncSession = Depends(get_db)
+    db: Session = Depends(get_db)
 ):
     """
     Register a new user in the system.
@@ -56,7 +57,7 @@ async def register(
 )
 async def login(
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
-    db: AsyncSession = Depends(get_db)
+    db: Session = Depends(get_db)
 ):
     """
     Authenticate user and generate access token.
@@ -80,22 +81,16 @@ async def login(
     summary="Get current user information",
     description="Returns the information of the currently authenticated user."
 )
-async def get_current_user(
-    token: Annotated[str, Depends(oauth2_scheme)],
-    db: AsyncSession = Depends(get_db)
+async def get_current_user_endpoint(
+    current_user: UserResponse = Depends(get_current_user)
 ):
     """
     Get information about the currently authenticated user.
     
     Args:
-        token: JWT access token from authorization header
-        db: Database session
+        current_user: Current authenticated user from token
         
     Returns:
         UserResponse: Current user information
-        
-    Raises:
-        HTTPException: If token is invalid or expired
     """
-    auth_service = AuthService(db)
-    return await auth_service.get_current_user(token) 
+    return current_user 

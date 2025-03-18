@@ -2,6 +2,14 @@ from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, Foreig
 from sqlalchemy.orm import relationship
 from ..core.database import Base
 
+class NationalityFlag(Base):
+    __tablename__ = "nationality_flags"
+
+    id = Column(Integer, primary_key=True, index=True)
+    nationality_code = Column(String, unique=True, nullable=False)
+    flag_filename = Column(String, nullable=False)
+    country_name = Column(String, nullable=False)
+
 class RaceWeekend(Base):
     __tablename__ = "race_weekends"
 
@@ -68,4 +76,20 @@ class SprintResult(Base):
     status = Column(String)
     points = Column(Float)
     
-    race_weekend = relationship("RaceWeekend", back_populates="sprint_results") 
+    race_weekend = relationship("RaceWeekend", back_populates="sprint_results")
+
+class FallbackDriver(Base):
+    __tablename__ = "fallback_drivers"
+
+    id = Column(Integer, primary_key=True, index=True)
+    number = Column(Integer, nullable=False)
+    name = Column(String, nullable=False)
+    team = Column(String, nullable=False)
+    nationality = Column(String, nullable=False)
+    flag_filename = Column(String, nullable=True)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, nullable=False)
+    updated_at = Column(DateTime, nullable=False)
+
+    def __repr__(self):
+        return f"<FallbackDriver {self.name}>" 

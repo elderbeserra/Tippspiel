@@ -24,7 +24,10 @@ class F1DataSynchronizer:
 
             # Sync results for completed race weekends
             for race_weekend in race_weekends:
-                if race_weekend.session_date.scalar() <= datetime.now():
+                session_date = race_weekend.session_date
+                if hasattr(session_date, 'scalar'):
+                    session_date = session_date.scalar()
+                if session_date <= datetime.now():
                     success = await self.sync_service.sync_race_results(race_weekend)
                     if success:
                         logger.info(f"Successfully synced results for {race_weekend.circuit_name}")
@@ -39,11 +42,18 @@ class F1DataSynchronizer:
     async def sync_race_results(self, race_weekend: RaceWeekend):
         """Synchronize results for a specific race weekend."""
         try:
-            success = await self.sync_service.sync_race_results(race_weekend)
-            if success:
-                logger.info(f"Successfully synced post-race results for {race_weekend.circuit_name}")
-            else:
-                logger.error(f"Failed to sync post-race results for {race_weekend.circuit_name}")
+            if race_weekend:
+                current_time = datetime.now()
+                session_date = race_weekend.session_date
+                if hasattr(session_date, 'scalar'):
+                    session_date = session_date.scalar()
+                race_end = session_date + timedelta(hours=2)
+                if current_time >= race_end + timedelta(hours=1):
+                    success = await self.sync_service.sync_race_results(race_weekend)
+                    if success:
+                        logger.info(f"Successfully synced results for {race_weekend.circuit_name}")
+                    else:
+                        logger.error(f"Failed to sync results for {race_weekend.circuit_name}")
         except Exception as e:
             logger.error(f"Error in race results sync: {str(e)}")
         finally:
@@ -74,7 +84,9 @@ async def schedule_sync():
             )
             
             if race_weekend:
-                session_date = race_weekend.session_date.scalar()
+                session_date = race_weekend.session_date
+                if hasattr(session_date, 'scalar'):
+                    session_date = session_date.scalar()
                 race_end = session_date + timedelta(hours=2)
                 if now >= race_end + timedelta(hours=1):
                     await f1_synchronizer.sync_race_results(race_weekend)

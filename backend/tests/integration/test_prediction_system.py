@@ -2,23 +2,11 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
+from unittest.mock import Mock
 
-# Check if ScoringService exists
-try:
-    from app.services.scoring_service import ScoringService
-except ImportError:
-    # Mock ScoringService if it doesn't exist
-    from unittest.mock import Mock
-    class ScoringService:
-        def __init__(self, db):
-            self.db = db
-        
-        def calculate_score(self, prediction):
-            mock_score = Mock()
-            mock_score.total_score = Mock(return_value=70)
-            return mock_score
-
-from app.models.f1_data import RaceResult, RaceWeekend
+# Import the ScoringService directly
+from app.services.scoring_service import ScoringService
+from app.models.f1_data import RaceResult, RaceWeekend, QualifyingResult
 
 @pytest.fixture
 def race_result(sync_db: Session):
@@ -30,7 +18,7 @@ def race_result(sync_db: Session):
         country="Test Country",
         location="Test Location",
         circuit_name="Test Circuit",
-        session_date=datetime.now(),
+        session_date=datetime.now() + timedelta(days=1),
         has_sprint=False
     )
     sync_db.add(race_weekend)
@@ -97,7 +85,8 @@ def test_full_prediction_flow(
     
     # Calculate scores
     scoring_service = ScoringService(sync_db)
-    score = scoring_service.calculate_score(user_prediction)
+    race_results = sync_db.query(RaceResult).filter(RaceResult.race_weekend_id == race_result.race_weekend_id).all()
+    score = scoring_service.calculate_score(user_prediction, race_results)
     
     # Verify all scoring components
     assert score.total_score > 0  # Some points should be awarded
@@ -110,16 +99,17 @@ def test_partial_prediction_scoring(
 ):
     """Test scoring with partially correct predictions."""
     prediction_data = {
-        "race_id": race_result.race_id,
-        "winner_driver": 1,  # Correct
-        "podium_drivers": [1, 33, 44],  # Partially correct
+        "race_weekend_id": race_result.race_weekend_id,
+        "top_10_prediction": "1,33,44,16,55,4,14,31,22,10",  # Partially correct
+        "pole_position": 1,  # Correct
         "fastest_lap_driver": 44,  # Incorrect
         "most_pit_stops_driver": 16,  # Correct
-        "most_positions_gained": 77  # Incorrect
+        "most_positions_gained": 77,  # Incorrect
+        "sprint_winner": None
     }
     
     response = client.post(
-        "/predictions",
+        "/api/v1/predictions/",
         json=prediction_data,
         headers=auth_headers
     )
@@ -127,14 +117,15 @@ def test_partial_prediction_scoring(
     prediction = response.json()
     
     scoring_service = ScoringService(sync_db)
-    score = scoring_service.calculate_score(prediction)
+    race_results = sync_db.query(RaceResult).filter(RaceResult.race_weekend_id == race_result.race_weekend_id).all()
+    score = scoring_service.calculate_score(prediction, race_results)
     
-    assert score.winner_score.scalar() == 25  # Correct winner
-    assert score.podium_score.scalar() == 10  # Partially correct podium
-    assert score.fastest_lap_score.scalar() == 0  # Incorrect fastest lap
-    assert score.most_pit_stops_score.scalar() == 10  # Correct most pit stops
-    assert score.most_positions_gained_score.scalar() == 0  # Incorrect positions gained
-    assert score.total_score.scalar() == 45
+    # Check individual score components
+    assert score.pole_position_score == 5  # Correct pole position
+    assert score.fastest_lap_score == 0  # Incorrect fastest lap
+    assert score.most_pit_stops_score == 10  # Correct most pit stops
+    assert score.most_positions_gained_score == 0  # Incorrect positions gained
+    assert score.total_score > 0  # Some points should be awarded
 
 def test_streak_bonus(
     client: TestClient,
@@ -142,45 +133,75 @@ def test_streak_bonus(
     auth_headers
 ):
     """Test bonus points for prediction streaks."""
-    # Create multiple race results
+    # Create multiple race weekends
     race_dates = [
-        datetime.now() - timedelta(days=14),
-        datetime.now() - timedelta(days=7),
-        datetime.now()
+        datetime.now() + timedelta(days=1),
+        datetime.now() + timedelta(days=8),
+        datetime.now() + timedelta(days=15)
     ]
     
-    race_results = []
+    race_weekends = []
     for i, date in enumerate(race_dates, 1):
-        result = RaceResult(
-            race_id=i,
-            race_name=f"Race {i}",
-            race_date=date,
-            winner_driver=1,
-            podium_drivers="1,33,77",
-            fastest_lap_driver=1,
-            most_pit_stops_driver=16,
-            most_positions_gained=55,
-            pit_stops_data="1:2,33:2,77:2,16:3,55:2",
-            grid_positions="1,33,77,16,55",
-            final_positions="1,33,77,16,55"
+        race_weekend = RaceWeekend(
+            year=2023,
+            round_number=i,
+            country=f"Test Country {i}",
+            location=f"Test Location {i}",
+            circuit_name=f"Test Circuit {i}",
+            session_date=date,
+            has_sprint=False
         )
-        sync_db.add(result)
+        sync_db.add(race_weekend)
         sync_db.commit()
-        race_results.append(result)
+        sync_db.refresh(race_weekend)
+        
+        # Add qualifying results
+        quali_result = QualifyingResult(
+            race_weekend_id=race_weekend.id,
+            position=1,
+            driver_number=1,
+            driver_name="Lewis Hamilton",
+            team="Mercedes",
+            q1_time="1:20.000",
+            q2_time="1:19.500",
+            q3_time="1:19.000"
+        )
+        sync_db.add(quali_result)
+        
+        # Add race results
+        race_result = RaceResult(
+            race_weekend_id=race_weekend.id,
+            position=1,
+            driver_number=1,
+            driver_name="Lewis Hamilton",
+            team="Mercedes",
+            grid_position=1,
+            status="Finished",
+            points=25.0,
+            fastest_lap=True,
+            fastest_lap_time="1:30.000",
+            first_pit_lap=20,
+            first_pit_time="25:30.000",
+            pit_stops_count=2
+        )
+        sync_db.add(race_result)
+        sync_db.commit()
+        race_weekends.append(race_weekend)
     
     # Make correct predictions for all races
     predictions = []
-    for result in race_results:
+    for race_weekend in race_weekends:
         prediction_data = {
-            "race_id": result.race_id,
-            "winner_driver": 1,
-            "podium_drivers": [1, 33, 77],
+            "race_weekend_id": race_weekend.id,
+            "top_10_prediction": "1,33,44,16,55,4,14,31,22,10",
+            "pole_position": 1,
             "fastest_lap_driver": 1,
             "most_pit_stops_driver": 16,
-            "most_positions_gained": 55
+            "most_positions_gained": 55,
+            "sprint_winner": None
         }
         response = client.post(
-            "/predictions",
+            "/api/v1/predictions/",
             json=prediction_data,
             headers=auth_headers
         )
@@ -189,7 +210,8 @@ def test_streak_bonus(
     
     # Verify streak bonus in the latest prediction
     scoring_service = ScoringService(sync_db)
-    latest_score = scoring_service.calculate_score(predictions[-1])
+    race_results = sync_db.query(RaceResult).filter(RaceResult.race_weekend_id == race_weekends[-1].id).all()
+    latest_score = scoring_service.calculate_score(predictions[-1], race_results)
     
-    assert latest_score.streak_bonus.scalar() > 0  # Should have streak bonus
-    assert latest_score.total_score.scalar() > 70  # Regular max score + bonus 
+    assert latest_score.streak_bonus > 0  # Should have streak bonus
+    assert latest_score.total_score > 70  # Regular max score + bonus 

@@ -40,6 +40,14 @@ class SprintResultBase(BaseModel):
     class Config:
         from_attributes = True
 
+class Driver(BaseModel):
+    number: int
+    name: str
+    team: str
+
+class DriverList(BaseModel):
+    items: List[Driver]
+
 class RaceWeekendBase(BaseModel):
     year: int
     round_number: int

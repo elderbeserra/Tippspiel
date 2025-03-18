@@ -1,12 +1,14 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from typing import Optional
+from typing import Optional, List
 from ....core.database import get_db
 from ....models.f1_data import RaceWeekend as RaceWeekendModel
-from ....schemas.f1_data import RaceWeekend, RaceWeekendList
+from ....schemas.f1_data import RaceWeekend, RaceWeekendList, Driver, DriverList
+from ....services.f1_data import F1DataService
 from datetime import datetime
 
 router = APIRouter()
+f1_data_service = F1DataService()
 
 @router.get("/race-weekends/", response_model=RaceWeekendList)
 async def list_race_weekends(
@@ -95,4 +97,23 @@ async def get_race_weekend_by_round(
     if not race_weekend:
         raise HTTPException(status_code=404, detail="Race weekend not found")
     
-    return race_weekend 
+    return race_weekend
+
+@router.get("/drivers/", response_model=DriverList)
+async def get_current_season_drivers(
+    year: Optional[int] = Query(None, description="Year to get drivers for. Defaults to current year."),
+    db: Session = Depends(get_db)
+):
+    """
+    Get the list of drivers for the current or specified F1 season.
+    
+    Args:
+        year: Optional year to get drivers for. If not provided, uses current year.
+        db: Database session for fetching flag filenames.
+        
+    Returns:
+        List of drivers with their numbers, names, teams, and flag filenames.
+    """
+    driver_dicts = await f1_data_service.get_current_season_drivers(year, db)
+    drivers = [Driver(**driver) for driver in driver_dicts]
+    return DriverList(items=drivers) 

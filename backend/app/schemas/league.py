@@ -22,7 +22,7 @@ class LeagueCreate(LeagueBase):
 class LeagueResponse(LeagueBase):
     id: int
     created_at: datetime
-    owner_id: int
+    owner_id: int  # The league admin
     icon: Optional[str] = None  # Will be returned as base64
     member_count: int
     
@@ -48,4 +48,4 @@ class LeagueMemberResponse(BaseModel):
     user_id: int
     username: str
     joined_at: datetime
-    is_owner: bool 
+    is_owner: bool  # True if the user is the league admin 

@@ -5,6 +5,8 @@ from jose import JWTError, jwt
 from fastapi import HTTPException, status
 import secrets
 
+from .config import settings
+
 # Password hashing configuration
 pwd_context = CryptContext(
     schemes=["argon2"],  # Using Argon2 as primary hashing algorithm
@@ -15,9 +17,8 @@ pwd_context = CryptContext(
 )
 
 # JWT configuration
-SECRET_KEY = secrets.token_urlsafe(32)  # Generate a secure random key
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
+ACCESS_TOKEN_EXPIRE_MINUTES = settings.ACCESS_TOKEN_EXPIRE_MINUTES
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """
@@ -70,7 +71,7 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     # Add additional security claims
     to_encode["jti"] = secrets.token_urlsafe(16)  # Unique token ID
     
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
 
 def verify_token(token: str) -> dict:
@@ -87,7 +88,7 @@ def verify_token(token: str) -> dict:
         HTTPException: If token is invalid or expired
     """
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGORITHM])
         if payload.get("type") != "access":
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -117,7 +118,7 @@ def generate_password_reset_token(email: str) -> str:
         "type": "reset",
         "jti": secrets.token_urlsafe(16)
     }
-    return jwt.encode(token_data, SECRET_KEY, algorithm=ALGORITHM)
+    return jwt.encode(token_data, settings.SECRET_KEY, algorithm=ALGORITHM)
 
 def verify_password_reset_token(token: str) -> str:
     """
@@ -133,7 +134,7 @@ def verify_password_reset_token(token: str) -> str:
         HTTPException: If token is invalid or expired
     """
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGORITHM])
         if payload.get("type") != "reset":
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,

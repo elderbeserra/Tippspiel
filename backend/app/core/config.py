@@ -1,7 +1,8 @@
 from pydantic_settings import BaseSettings
-from typing import Optional
+from typing import Optional, List
 from functools import lru_cache
 import secrets
+import os
 
 class Settings(BaseSettings):
     # Application
@@ -20,7 +21,13 @@ class Settings(BaseSettings):
     DB_BACKUP_BUCKET: Optional[str] = None
     
     # CORS
-    BACKEND_CORS_ORIGINS: list[str] = ["http://localhost:3000"]
+    BACKEND_CORS_ORIGINS: List[str] = [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "https://localhost:3000",
+        "https://127.0.0.1:3000",
+        # Add your frontend production URL here when ready
+    ]
     
     # Rate Limiting
     RATE_LIMIT_PER_MINUTE: int = 60
@@ -35,6 +42,19 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         case_sensitive = True
+        
+    @property
+    def is_development(self) -> bool:
+        """Check if the application is running in development mode."""
+        return self.DEBUG or os.environ.get("ENVIRONMENT", "").lower() == "development"
+    
+    @property
+    def cors_origins(self) -> List[str]:
+        """Get CORS origins based on environment."""
+        if self.is_development:
+            # In development, allow all origins for easier testing
+            return ["*"]
+        return self.BACKEND_CORS_ORIGINS
 
 @lru_cache()
 def get_settings() -> Settings:

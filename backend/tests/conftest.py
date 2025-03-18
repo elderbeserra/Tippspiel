@@ -146,7 +146,7 @@ def sync_test_user(sync_db: Session) -> User:
     return user
 
 @pytest.fixture
-async def auth_headers(async_test_user: User) -> dict:
+def auth_headers(sync_test_user: User) -> dict:
     """Create authentication headers for a test user."""
     from app.core.security import create_access_token
     from app.core.config import settings
@@ -154,11 +154,8 @@ async def auth_headers(async_test_user: User) -> dict:
     # Ensure we're using the test secret key
     settings.SECRET_KEY = "test_secret_key_for_testing_only"
     
-    # Get the user
-    user = await async_test_user
-    
-    # Create token directly
-    access_token = create_access_token(data={"sub": str(user.id)})
+    # Create token directly using the sync test user
+    access_token = create_access_token(data={"sub": str(sync_test_user.id)})
     return {"Authorization": f"Bearer {access_token}"}
 
 # Override the get_db dependency

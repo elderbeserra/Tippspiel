@@ -3,6 +3,8 @@ from fastf1.core import Session
 from typing import Dict, List, Optional
 import logging
 import pandas as pd
+from sqlalchemy.orm import Session
+from ..models.f1_data import NationalityFlag, FallbackDriver
 
 logger = logging.getLogger(__name__)
 
@@ -10,6 +12,8 @@ class F1DataService:
     def __init__(self):
         # Enable caching
         fastf1.Cache.enable_cache('backend/.cache')
+        self.cache = {}
+        self.cache_timeout = 300  # 5 minutes
         
     async def get_race_schedule(self, year: int) -> List[Dict]:
         """Get the F1 race schedule for a specific year."""
@@ -101,6 +105,95 @@ class F1DataService:
         except Exception as e:
             logger.error(f"Error fetching sprint results for {year} round {round_number}: {str(e)}")
             return None
+
+    async def get_current_season_drivers(self, year: Optional[int] = None, db: Optional[Session] = None) -> List[Dict]:
+        """Get the list of drivers for the current or specified F1 season.
+        
+        Args:
+            year: Optional year to get drivers for. If not provided, uses current year.
+            db: Optional database session to fetch flag filenames.
+            
+        Returns:
+            List of dictionaries containing driver information (number, name, team, nationality, flag_filename).
+        """
+        try:
+            if year is None:
+                year = pd.Timestamp.now().year
+                
+            # Get the most recent race weekend to extract driver information
+            # This ensures we have the most up-to-date driver lineup
+            schedule = fastf1.get_event_schedule(year)
+            if schedule.empty:
+                logger.error(f"No race schedule found for {year}")
+                return self._get_fallback_drivers(db)
+                
+            # Get the most recent race that has been completed
+            most_recent_race = schedule.iloc[-1]  # Last race in the schedule
+            session = fastf1.get_session(year, most_recent_race['RoundNumber'], 'R')
+            session.load()
+            
+            # Extract driver information
+            drivers = []
+            for idx in session.results.index:
+                nationality_code = session.results.loc[idx, 'CountryCode']
+                flag_filename = None
+                
+                # Get flag filename from database if available
+                if db:
+                    flag = db.query(NationalityFlag).filter(
+                        NationalityFlag.nationality_code == nationality_code
+                    ).first()
+                    if flag:
+                        flag_filename = flag.flag_filename
+                
+                driver_info = {
+                    'number': int(float(str(session.results.loc[idx, 'DriverNumber']))),
+                    'name': f"{session.results.loc[idx, 'FirstName']} {session.results.loc[idx, 'LastName']}",
+                    'team': session.results.loc[idx, 'TeamName'],
+                    'nationality': nationality_code,
+                    'flag_filename': flag_filename
+                }
+                drivers.append(driver_info)
+            
+            # Sort drivers by number
+            drivers.sort(key=lambda x: x['number'])
+            return drivers
+            
+        except Exception as e:
+            logger.error(f"Error getting current season drivers: {str(e)}")
+            return self._get_fallback_drivers(db)
+
+    def _get_fallback_drivers(self, db: Optional[Session] = None) -> List[Dict]:
+        """Get fallback driver information from the database.
+        
+        Args:
+            db: Database session to fetch fallback drivers.
+            
+        Returns:
+            List of dictionaries containing fallback driver information.
+        """
+        if not db:
+            logger.error("Database session required for fallback drivers")
+            return []
+            
+        try:
+            fallback_drivers = db.query(FallbackDriver).filter(
+                FallbackDriver.is_active == True
+            ).order_by(FallbackDriver.number).all()
+            
+            return [
+                {
+                    'number': driver.number,
+                    'name': driver.name,
+                    'team': driver.team,
+                    'nationality': driver.nationality,
+                    'flag_filename': driver.flag_filename
+                }
+                for driver in fallback_drivers
+            ]
+        except Exception as e:
+            logger.error(f"Error getting fallback drivers: {str(e)}")
+            return []
 
     def _get_fastest_lap(self, session: Session) -> Dict:
         """Extract fastest lap information from session."""
